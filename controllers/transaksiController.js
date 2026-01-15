@@ -1,49 +1,68 @@
-const Transaksi = require('../models/transaksiModel');
+const db = require('../config/database'); 
 
-// 1. Buat Pesanan Baru (Checkout)
-exports.createTransaksi = (req, res) => {
-    // Data dari Android biasanya berupa JSON Object yang berisi header & array details
-    const { user_id, total_harga, metode_pembayaran, metode_pengiriman, detail_barang } = req.body;
+// 1. Buat Transaksi Baru (Checkout)
+const createTransaksi = (req, res) => {
+    // Tangkap data dari Android
+    const { user_id, total_harga, detail } = req.body;
 
-    const dataHeader = {
-        user_id,
-        total_harga,
-        metode_pembayaran,
-        metode_pengiriman,
-        status_pembayaran: 'Pending',
-        status_pengiriman: 'Diproses',
-        tanggal_transaksi: new Date()
-    };
+    // Validasi
+    if (!user_id || !detail || detail.length === 0) {
+        return res.status(400).json({ 
+            message: "Data transaksi tidak lengkap", 
+            detail_error: "user_id atau detail kosong" 
+        });
+    }
 
-    // Panggil Model
-    Transaksi.create(dataHeader, detail_barang, (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.status(201).json(result);
+    // --- PERBAIKAN DI SINI ---
+    // HAPUS 'tanggal' dan 'NOW()' dari query karena kolomnya tidak ada di database
+    const queryTransaksi = "INSERT INTO transaksi (user_id, total_harga) VALUES (?, ?)";
+
+    db.query(queryTransaksi, [user_id, total_harga], (err, result) => {
+        if (err) {
+            console.error("Error Insert Transaksi:", err);
+            return res.status(500).json({ error: err.message });
+        }
+
+        const transaksiId = result.insertId;
+        
+        // Loop simpan detail & kurangi stok
+        detail.forEach(item => {
+            // Update Stok
+            const queryUpdateStok = "UPDATE produk SET stok = stok - ? WHERE produk_id = ?";
+            db.query(queryUpdateStok, [item.jumlah, item.produk_id], (errStok) => {
+                if (errStok) console.error("Gagal update stok:", errStok.message);
+            });
+
+            // (Opsional) Insert ke detail_transaksi jika tabelnya ada
+            // const queryDetail = "INSERT INTO detail_transaksi ...";
+            // db.query(queryDetail, ...);
+        });
+
+        res.json({ message: "Transaksi berhasil", transaksiId: transaksiId });
     });
 };
 
-// 2. Lihat Semua Pesanan (Admin)
-exports.getAllTransaksi = (req, res) => {
-    Transaksi.getAll((err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+// 2. Ambil Riwayat Transaksi
+// 2. Ambil Riwayat Transaksi User
+// 2. Ambil Riwayat Transaksi User
+const getRiwayatTransaksi = (req, res) => {
+    const userId = req.params.userId;
+    
+    // --- PERBAIKAN: HAPUS 'ORDER BY ...' ---
+    // Kita gunakan SELECT standar dulu untuk menghindari error salah nama kolom ID
+    const query = "SELECT * FROM transaksi WHERE user_id = ?";
+
+    db.query(query, [userId], (err, results) => {
+        if (err) {
+            // Ini akan muncul di Terminal VS Code jika masih error
+            console.error("Error Database:", err.message); 
+            return res.status(500).json({ error: err.message });
+        }
         res.json(results);
     });
 };
 
-// 3. Lihat Pesanan Saya (User)
-exports.getTransaksiByUser = (req, res) => {
-    const { userId } = req.params;
-    Transaksi.getByUserId(userId, (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(results);
-    });
-};
-
-// 4. Lihat Detail Barang per Transaksi
-exports.getTransaksiDetail = (req, res) => {
-    const { transaksiId } = req.params;
-    Transaksi.getDetail(transaksiId, (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(results);
-    });
+module.exports = {
+    createTransaksi,
+    getRiwayatTransaksi
 };
